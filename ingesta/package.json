@@ -1,0 +1,27 @@
+{
+  "name": "laletra-api-ingesta",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ingestar": "tsx --env-file=../.env ingestar.mts",
+    "evaluar": "tsx --env-file=../.env evaluar.mts",
+    "vectorizar-preguntas": "tsx vectorizar-preguntas.mts"
+  },
+  "dependencies": {
+    "postgres": "^3.4.5",
+    "@huggingface/transformers": "^3.3.1"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "@types/node": "^22.10.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "onnxruntime-node",
+      "sharp",
+      "esbuild",
+      "protobufjs"
+    ]
+  }
+}
