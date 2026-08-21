@@ -7,7 +7,6 @@
     "modelo": "node --experimental-strip-types descargar-modelo.mts"
   },
   "dependencies": {
-    "@huggingface/transformers": "^3.3.1",
     "postgres": "^3.4.5"
   },
   "devDependencies": {

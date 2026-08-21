@@ -4,6 +4,10 @@ La búsqueda de [laletra](https://github.com/Valdivia94x/laletra) movida a un se
 **pgvector en Postgres** para el índice, **AWS Lambda** para la API, y el híbrido completo
 —vectorial + palabras, fusionados con RRF— resuelto dentro de una función SQL.
 
+En producción: **~36 ms** por consulta en caliente, arranque en frío de ~460 ms, en Lambda arm64
+con 512 MB. La función recibe el vector de la consulta y devuelve los artículos ordenados; el
+embedding se calcula en el cliente, igual que en laletra.
+
 No sustituye a laletra. Aquel proyecto corre el modelo en el navegador y su gracia es que la
 consulta nunca sale de tu máquina; este renuncia a eso a cambio de que el corpus no tenga que
 caber en la memoria del cliente. Son dos respuestas distintas a la misma pregunta, y tenerlas
@@ -81,6 +85,28 @@ No carga el modelo: las 26 preguntas se vectorizan una vez con `pnpm vectorizar-
 guardan en JSON. Además de correr en segundos y no necesitar 112 MB en CI, eso esquiva que
 `onnxruntime-node` reviente al liberar sus hilos y convierta un ✓ en un exit 134.
 
+## Por qué el modelo no corre dentro de la Lambda
+
+La primera versión vectorizaba la consulta en el servidor. No se pudo, y las dos razones valen
+más que la conclusión:
+
+**El bundle de Node de transformers.js importa `onnxruntime-node` de forma dura.** Ese binario
+arranca detectando CPUs en `/sys/devices/system/cpu/possible`, árbol que el sandbox de Lambda no
+expone. `cpuinfo` falla, se lanza una `OnnxRuntimeException` antes de que el runtime registre su
+propio logger, y el proceso aborta en ~1.2 s sin haber cargado nada. Pedir `device: "wasm"` no
+sirve: el binding se carga al importar el módulo, mucho antes de mirar esa opción. Borrar el
+paquete tampoco: el import es obligatorio y la resolución revienta.
+
+**El bundle web trae runtime WebAssembly y no toca `/sys`, pero lee los pesos por `fetch`.**
+Ahí `localModelPath` es una URL, no un directorio; en Lambda el modelo está en disco, así que
+encuentra la ruta y no sabe abrirla.
+
+La salida no fue un consuelo sino la arquitectura de laletra: el cliente vectoriza y su pregunta
+no viaja. La imagen bajó de 1.65 GB a decenas de MB, el arranque en frío de más de un segundo
+—cuando arrancaba— a ~460 ms, y la función quedó con 512 MB porque con 2 GB rendía exactamente
+igual. Lo que corre en el servidor sigue siendo lo interesante: el ranking híbrido dentro de
+Postgres.
+
 ## Decisiones de infraestructura
 
 **Los vectores se copian, no se recalculan.** La ingesta lee el `vectores.bin` que laletra ya
@@ -95,11 +121,22 @@ listas ni re-entrenar al insertar.
 Lambda es 250 MB. Con contenedor hay 10 GB y, sobre todo, el modelo queda horneado en la imagen
 en vez de descargarse durante la petición del primer usuario tras cada despliegue.
 
+**`--provenance=false --sbom=false` al construir.** Buildx adjunta attestations por defecto y
+publica un manifest OCI con varias entradas; Lambda lo rechaza con «image manifest, config or
+layer media type not supported». Sin ellas queda un manifest Docker clásico, que sí acepta.
+
 **El pipeline y el pool viven fuera del handler.** Lambda reutiliza contenedores: un arranque en
 frío carga el modelo una vez y las siguientes peticiones responden en decenas de milisegundos.
 
 **Puerto 6543, no 5432.** El pooler en modo transacción de Supabase. Lambda abre y cierra
 contenedores sin avisar, y una conexión directa por invocación agota Postgres.
+
+**La función vive en us-east-2 y la base en us-east-1.** No es una decisión de diseño sino una
+restricción heredada: la cuenta se creó con el onboarding nuevo de AWS, que la mete en una
+organización cuya SCP sólo habilita ciertas regiones, y us-east-1 no es una de ellas. Son
+regiones vecinas —del orden de 12-15 ms extra por consulta— y el ranking corre entero dentro de
+Postgres, así que se paga un viaje por petición y no uno por resultado. Si la cuenta llega a
+permitir us-east-1, mover la función es recrearla apuntando a la misma imagen.
 
 ## Poner a andar
 
@@ -118,26 +155,50 @@ cd ingesta && pnpm install && pnpm ingestar
 pnpm vectorizar-preguntas   # una vez: deja las 26 preguntas en JSON
 pnpm evaluar                # no carga el modelo; corre en segundos
 
-# 4. Construir y desplegar la Lambda
+# 4. Construir y desplegar la Lambda (arm64 / Graviton)
 cd ../lambda
-docker build --platform linux/amd64 -t laletra-api .
-# etiquetar y empujar a ECR, luego crear la función desde esa imagen
+CUENTA=$(aws sts get-caller-identity --query Account --output text)
+REGION=us-east-2   # ver nota abajo
+
+aws ecr create-repository --repository-name laletra-api --region $REGION
+aws ecr get-login-password --region $REGION \
+  | docker login --username AWS --password-stdin $CUENTA.dkr.ecr.$REGION.amazonaws.com
+
+docker build --platform linux/arm64 --provenance=false --sbom=false -t laletra-api .
+docker tag laletra-api:latest $CUENTA.dkr.ecr.$REGION.amazonaws.com/laletra-api:latest
+docker push $CUENTA.dkr.ecr.$REGION.amazonaws.com/laletra-api:latest
+
+aws lambda create-function \
+  --function-name laletra-api \
+  --package-type Image \
+  --code ImageUri=$CUENTA.dkr.ecr.$REGION.amazonaws.com/laletra-api:latest \
+  --role arn:aws:iam::$CUENTA:role/laletra-api-ejecucion \
+  --architectures arm64 --memory-size 2048 --timeout 30 \
+  --environment "Variables={DATABASE_URL=...}"
+
+aws lambda create-function-url-config --function-name laletra-api --auth-type NONE
 ```
 
-La función espera `DATABASE_URL` en variables de entorno, 1024 MB de memoria y 30 s de timeout
-(el arranque en frío carga el modelo).
+La función espera `DATABASE_URL` apuntando al **transaction pooler** de Supabase (puerto 6543),
+2048 MB de memoria y 30 s de timeout: el arranque en frío carga el modelo, y con menos memoria
+Lambda asigna menos CPU y esa carga se alarga.
 
+```json
+POST  { "vector": [384 números], "pregunta": "¿pueden entrar a mi casa sin una orden?", "n": 5 }
 ```
-GET /?q=¿pueden entrar a mi casa sin una orden?&n=5
-```
+
+`vector` es obligatorio: el embedding de la consulta, calculado en el cliente con
+multilingual-e5-small y el prefijo `query: `. `pregunta` es opcional — sin ella el lado de
+palabras no vota y la búsqueda queda puramente semántica.
 
 ```json
 {
   "pregunta": "¿pueden entrar a mi casa sin una orden?",
+  "modo": "hibrido",
   "resultados": [
-    { "articulo": 16, "afinidad": 0.87, "rrf": 0.032787, "via": "ambos", "fragmento": "…" }
+    { "articulo": 16, "afinidad": 0.8292, "rrf": 0.032787, "via": "ambos", "fragmento": "Nadie puede ser molestado en su persona, familia, domicilio…" }
   ],
-  "ms": 42
+  "ms": 36
 }
 ```
 
