@@ -128,6 +128,12 @@ layer media type not supported». Sin ellas queda un manifest Docker clásico, q
 **El pipeline y el pool viven fuera del handler.** Lambda reutiliza contenedores: un arranque en
 frío carga el modelo una vez y las siguientes peticiones responden en decenas de milisegundos.
 
+**Se invoca por IAM, no por Function URL.** La función tenía una URL pública con `auth-type
+NONE` y su permiso correspondiente, y aun así devolvía 403: la cuenta vive en una organización
+—herencia del onboarding nuevo de AWS— cuya política prohíbe exponer Lambdas sin autenticar. Se
+eliminó en vez de dejarla rota. Para un endpoint público habría que poner API Gateway delante o
+mover la función a una cuenta sin esa restricción.
+
 **Puerto 6543, no 5432.** El pooler en modo transacción de Supabase. Lambda abre y cierra
 contenedores sin avisar, y una conexión directa por invocación agota Postgres.
 
@@ -176,7 +182,10 @@ aws lambda create-function \
   --architectures arm64 --memory-size 2048 --timeout 30 \
   --environment "Variables={DATABASE_URL=...}"
 
-aws lambda create-function-url-config --function-name laletra-api --auth-type NONE
+# Sin Function URL: ver nota abajo. Se invoca por SDK o CLI.
+aws lambda invoke --function-name laletra-api \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{"body":"{\"vector\":[...],\"pregunta\":\"...\"}"}' respuesta.json
 ```
 
 La función espera `DATABASE_URL` apuntando al **transaction pooler** de Supabase (puerto 6543),
