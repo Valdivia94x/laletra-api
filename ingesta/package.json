@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "ingestar": "tsx --env-file=../.env ingestar.mts",
-    "evaluar": "tsx --env-file=../.env evaluar.mts",
+    "ingestar": "tsx --env-file-if-exists=../.env ingestar.mts",
+    "evaluar": "tsx --env-file-if-exists=../.env evaluar.mts",
     "vectorizar-preguntas": "tsx vectorizar-preguntas.mts"
   },
   "dependencies": {
