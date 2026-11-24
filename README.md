@@ -2,7 +2,7 @@
 
 La búsqueda de [laletra](https://github.com/Valdivia94x/laletra) movida a un servidor:
 **pgvector en Postgres** para el índice, **AWS Lambda** para la API, y el híbrido completo
-—vectorial + palabras, fusionados con RRF— resuelto dentro de una función SQL.
+(vectorial + palabras, fusionados con RRF) resuelto dentro de una función SQL.
 
 En producción: **~36 ms** por consulta en caliente, arranque en frío de ~460 ms, en Lambda arm64
 con 512 MB. La función recibe el vector de la consulta y devuelve los artículos ordenados; el
@@ -72,7 +72,7 @@ stemmer) el híbrido sube de 17/26 a 18/26.
 arregla `expropiacion` y `guerra`, pero rompe `armas`, `agua` y `extranjeros`. El híbrido de
 laletra existía para compensar un semántico débil; al quitarle el sesgo de la cuantización, la
 mitad de palabras dejó de aportar. Sigue ganando en top-5 (24 contra 23), que es lo que ve quien
-consulta, así que se queda como opción por defecto — pero documentado, no asumido.
+consulta, así que se queda como opción por defecto, pero documentado, no asumido.
 
 Es el tipo de cosa que solo aparece si mides. El buscador *funcionaba* en las tres versiones
 intermedias: devolvía buenos resultados y nadie habría notado a mano que media arquitectura
@@ -103,7 +103,7 @@ encuentra la ruta y no sabe abrirla.
 
 La salida no fue un consuelo sino la arquitectura de laletra: el cliente vectoriza y su pregunta
 no viaja. La imagen bajó de 1.65 GB a decenas de MB, el arranque en frío de más de un segundo
-—cuando arrancaba— a ~460 ms, y la función quedó con 512 MB porque con 2 GB rendía exactamente
+(cuando arrancaba) a ~460 ms, y la función quedó con 512 MB porque con 2 GB rendía exactamente
 igual. Lo que corre en el servidor sigue siendo lo interesante: el ranking híbrido dentro de
 Postgres.
 
@@ -130,7 +130,7 @@ frío carga el modelo una vez y las siguientes peticiones responden en decenas d
 
 **Se invoca por IAM, no por Function URL.** La función tenía una URL pública con `auth-type
 NONE` y su permiso correspondiente, y aun así devolvía 403: la cuenta vive en una organización
-—herencia del onboarding nuevo de AWS— cuya política prohíbe exponer Lambdas sin autenticar. Se
+(herencia del onboarding nuevo de AWS) cuya política prohíbe exponer Lambdas sin autenticar. Se
 eliminó en vez de dejarla rota. Para un endpoint público habría que poner API Gateway delante o
 mover la función a una cuenta sin esa restricción.
 
@@ -140,7 +140,7 @@ contenedores sin avisar, y una conexión directa por invocación agota Postgres.
 **La función vive en us-east-2 y la base en us-east-1.** No es una decisión de diseño sino una
 restricción heredada: la cuenta se creó con el onboarding nuevo de AWS, que la mete en una
 organización cuya SCP sólo habilita ciertas regiones, y us-east-1 no es una de ellas. Son
-regiones vecinas —del orden de 12-15 ms extra por consulta— y el ranking corre entero dentro de
+regiones vecinas (del orden de 12-15 ms extra por consulta), y el ranking corre entero dentro de
 Postgres, así que se paga un viaje por petición y no uno por resultado. Si la cuenta llega a
 permitir us-east-1, mover la función es recrearla apuntando a la misma imagen.
 
@@ -198,7 +198,7 @@ POST  { "vector": [384 números], "pregunta": "¿pueden entrar a mi casa sin una
 ```
 
 `vector` es obligatorio: el embedding de la consulta, calculado en el cliente con
-multilingual-e5-small y el prefijo `query: `. `pregunta` es opcional — sin ella el lado de
+multilingual-e5-small y el prefijo `query: `. `pregunta` es opcional. Sin ella, el lado de
 palabras no vota y la búsqueda queda puramente semántica.
 
 ```json
