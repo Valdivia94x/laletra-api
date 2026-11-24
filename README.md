@@ -153,6 +153,7 @@ cp .env.example .env        # DATABASE_URL de Supabase + ruta a laletra
 psql "$DATABASE_URL" -f sql/01-esquema.sql
 psql "$DATABASE_URL" -f sql/03-palabras.sql
 psql "$DATABASE_URL" -f sql/04-buscar-hibrido.sql
+psql "$DATABASE_URL" -f sql/05-buscar-hibrido-con-texto.sql
 
 # 2. Subir el índice que laletra ya generó
 cd ingesta && pnpm install && pnpm ingestar
